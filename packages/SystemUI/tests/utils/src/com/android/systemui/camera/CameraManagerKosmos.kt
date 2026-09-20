@@ -34,7 +34,8 @@ import org.mockito.stubbing.Answer
  * This will mock only some methods of [CameraManager] and throw [RuntimeExceptionAnswer] if other
  * methods are called. The mocked methods are [CameraManager.getCameraIdList],
  * [CameraManager.getCameraCharacteristics], [CameraManager.registerTorchCallback],
- * [CameraManager.unregisterTorchCallback], [CameraManager.getTorchStrengthLevel],
+ * [CameraManager.unregisterTorchCallback], [CameraManager.registerAvailabilityCallback],
+ * [CameraManager.unregisterAvailabilityCallback], [CameraManager.getTorchStrengthLevel],
  * [CameraManager.setTorchMode], and [CameraManager.turnOnTorchWithStrengthLevel].
  */
 val Kosmos.cameraManager: CameraManager by Kosmos.Fixture { mockCameraManager() }
@@ -88,6 +89,17 @@ private fun mockCameraManager(): CameraManager {
         }
         .whenever(cameraManager)
         .unregisterTorchCallback(any<CameraManager.TorchCallback>())
+
+    doAnswer { _: InvocationOnMock -> Unit }
+        .whenever(cameraManager)
+        .registerAvailabilityCallback(
+            any<java.util.concurrent.Executor>(),
+            any<CameraManager.AvailabilityCallback>(),
+        )
+
+    doAnswer { _: InvocationOnMock -> Unit }
+        .whenever(cameraManager)
+        .unregisterAvailabilityCallback(any<CameraManager.AvailabilityCallback>())
 
     doAnswer { _: InvocationOnMock -> level }
         .whenever(cameraManager)

@@ -20,6 +20,7 @@ import android.content.pm.PackageManager
 import android.hardware.camera2.CameraAccessException
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
+import android.hardware.camera2.CameraManager.AvailabilityCallback
 import android.hardware.camera2.CameraManager.TorchCallback
 import android.provider.Settings
 import com.android.systemui.CoreStartable
@@ -50,12 +51,15 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -114,6 +118,8 @@ constructor(
 
     private val flashlightInfo = MutableStateFlow<FlashlightInfo>(FlashlightInfo.NotSupported)
 
+    private val discoveryMutex = Mutex()
+
     private var canAttemptReconnect = AtomicBoolean(true)
 
     private var _deviceSupportsFlashlight = false
@@ -142,9 +148,29 @@ constructor(
 
             flashlightInfo.emit(FlashlightInfo.Supported.Initial)
 
-            // let's see if it can connect to a flashlight in practice
-            connectToCameraLoadFlashlightInfo()
+            // Register before the first attempt so camera enumeration cannot race discovery.
+            cameraDiscoveryEvents.first {
+                connectToCameraLoadFlashlightInfo(cameraAvailabilityChanged = true)
+            }
         }
+    }
+
+    private val cameraDiscoveryEvents: Flow<Unit> = conflatedCallbackFlow {
+        val callback =
+            object : AvailabilityCallback() {
+                override fun onCameraAvailable(cameraId: String) {
+                    logger.d("Camera $cameraId available; retrying flashlight discovery")
+                    trySend(Unit)
+                }
+
+                override fun onCameraUnavailable(cameraId: String) {
+                    // An enumerated camera can already be in use when it first appears.
+                    trySend(Unit)
+                }
+            }
+        cameraManager.registerAvailabilityCallback(bgDispatcher.asExecutor(), callback)
+        trySend(Unit)
+        awaitClose { cameraManager.unregisterAvailabilityCallback(callback) }
     }
 
     /**
@@ -153,31 +179,35 @@ constructor(
      *
      * @return flashlight info loaded
      */
-    private suspend fun connectToCameraLoadFlashlightInfo(): Boolean =
-        when (flashlightInfo.value) {
-            is FlashlightInfo.NotSupported -> false
-            is FlashlightInfo.Supported.LoadedSuccessfully -> true
-            is FlashlightInfo.Supported.Initial,
-            FlashlightInfo.Supported.ErrorLoading -> {
-                if (canAttemptReconnect.getAndSet(false)) {
-                    updateReconnect()
-                    var foundCamera: Boolean
-                    try {
-                        foundCamera = loadFlashlightInfo() != null
-                    } catch (exception: Exception) {
-                        foundCamera = false
-                        logger.w("Could not find a camera: ${exception.message}")
+    private suspend fun connectToCameraLoadFlashlightInfo(
+        cameraAvailabilityChanged: Boolean = false
+    ): Boolean =
+        discoveryMutex.withLock {
+            when (flashlightInfo.value) {
+                is FlashlightInfo.NotSupported -> false
+                is FlashlightInfo.Supported.LoadedSuccessfully -> true
+                is FlashlightInfo.Supported.Initial,
+                FlashlightInfo.Supported.ErrorLoading -> {
+                    if (canAttemptReconnect.getAndSet(false) || cameraAvailabilityChanged) {
+                        updateReconnect()
+                        var foundCamera: Boolean
+                        try {
+                            foundCamera = loadFlashlightInfo() != null
+                        } catch (exception: Exception) {
+                            foundCamera = false
+                            logger.w("Could not find a camera: ${exception.message}")
+                        }
+                        if (!foundCamera) {
+                            flashlightInfo.emit(FlashlightInfo.Supported.ErrorLoading)
+                        }
+                        foundCamera
+                    } else {
+                        logger.d(
+                            "Need to wait for ${RECONNECT_COOLDOWN.inWholeSeconds} seconds from" +
+                                " last attempt before trying to reconnect."
+                        )
+                        false
                     }
-                    if (!foundCamera) {
-                        flashlightInfo.emit(FlashlightInfo.Supported.ErrorLoading)
-                    }
-                    foundCamera
-                } else {
-                    logger.d(
-                        "Need to wait for ${RECONNECT_COOLDOWN.inWholeSeconds} seconds from" +
-                            " last attempt before trying to reconnect."
-                    )
-                    false
                 }
             }
         }

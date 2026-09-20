@@ -20,6 +20,7 @@ import android.content.packageManager
 import android.content.pm.PackageManager
 import android.content.pm.UserInfo
 import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager.AvailabilityCallback
 import android.hardware.camera2.CameraManager.TorchCallback
 import android.platform.test.annotations.EnableFlags
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -605,6 +606,50 @@ class FlashlightRepositoryTest : SysuiTestCase() {
             underTest.setLevel(BASE_TORCH_LEVEL)
 
             assertThat(state).isEqualTo(FlashlightModel.Unavailable.Temporarily.NotFound)
+        }
+
+    @Test
+    fun cameraAppearsAvailable_beforeCooldown_recoversWithoutUserAction() =
+        kosmos.runTest {
+            val state by collectLastValue(underTest.state)
+            Mockito.`when`(cameraManager.cameraIdList).thenReturn(emptyArray())
+            startFlashlightRepository(true)
+            assertThat(state).isEqualTo(FlashlightModel.Unavailable.Temporarily.NotFound)
+
+            val callback = ArgumentCaptor.forClass(AvailabilityCallback::class.java)
+            verify(cameraManager).registerAvailabilityCallback(any<Executor>(), callback.capture())
+            injectCameraCharacteristics(true, CameraCharacteristics.LENS_FACING_BACK)
+            Mockito.`when`(cameraManager.cameraIdList).thenReturn(arrayOf("ID"))
+            callback.value.onCameraAvailable("ID")
+            runCurrent()
+
+            assertThat(state)
+                .isEqualTo(
+                    FlashlightModel.Available.Level(false, DEFAULT_DEFAULT_LEVEL, DEFAULT_MAX_LEVEL)
+                )
+            verify(cameraManager).unregisterAvailabilityCallback(callback.value)
+        }
+
+    @Test
+    fun cameraAppearsUnavailable_beforeCooldown_recoversWithoutUserAction() =
+        kosmos.runTest {
+            val state by collectLastValue(underTest.state)
+            Mockito.`when`(cameraManager.cameraIdList).thenReturn(emptyArray())
+            startFlashlightRepository(true)
+            assertThat(state).isEqualTo(FlashlightModel.Unavailable.Temporarily.NotFound)
+
+            val callback = ArgumentCaptor.forClass(AvailabilityCallback::class.java)
+            verify(cameraManager).registerAvailabilityCallback(any<Executor>(), callback.capture())
+            injectCameraCharacteristics(true, CameraCharacteristics.LENS_FACING_BACK)
+            Mockito.`when`(cameraManager.cameraIdList).thenReturn(arrayOf("ID"))
+            callback.value.onCameraUnavailable("ID")
+            runCurrent()
+
+            assertThat(state)
+                .isEqualTo(
+                    FlashlightModel.Available.Level(false, DEFAULT_DEFAULT_LEVEL, DEFAULT_MAX_LEVEL)
+                )
+            verify(cameraManager).unregisterAvailabilityCallback(callback.value)
         }
 
     @Test
