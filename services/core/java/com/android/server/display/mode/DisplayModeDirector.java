@@ -51,6 +51,7 @@ import android.os.PowerManager;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.SystemClock;
+import android.os.SystemProperties;
 import android.os.Temperature;
 import android.os.UserHandle;
 import android.provider.DeviceConfig;
@@ -108,6 +109,8 @@ import java.util.function.IntSupplier;
  * picked by the system based on system-wide and display-specific configuration.
  */
 public class DisplayModeDirector {
+    private static final String FORCE_PEAK_REFRESH_RATE_PROPERTY =
+            "debug.tracing.force_peak_refresh_rate";
 
     public static final float SYNCHRONIZED_REFRESH_RATE_TARGET = DEFAULT_LOW_REFRESH_RATE;
     public static final float SYNCHRONIZED_REFRESH_RATE_TOLERANCE = 1;
@@ -1168,6 +1171,13 @@ public class DisplayModeDirector {
 
             float minRefreshRate = Settings.System.getFloatForUser(cr,
                     Settings.System.MIN_REFRESH_RATE, 0f, UserHandle.USER_CURRENT);
+            if (displayId == Display.DEFAULT_DISPLAY) {
+                final boolean forcePeakRefreshRate = Float.isInfinite(minRefreshRate)
+                        || (highestRefreshRate > 0f
+                                && minRefreshRate >= highestRefreshRate - 0.01f);
+                SystemProperties.set(FORCE_PEAK_REFRESH_RATE_PROPERTY,
+                        forcePeakRefreshRate ? "1" : "0");
+            }
             if (Float.isInfinite(minRefreshRate)) {
                 // Infinity means that we want the highest possible refresh rate
                 minRefreshRate = highestRefreshRate;
