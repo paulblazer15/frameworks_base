@@ -53,6 +53,7 @@ import android.internal.perfetto.protos.Windowmanagerservice.KeyguardPerDisplayP
 import android.os.IBinder;
 import android.os.RemoteException;
 import android.os.SystemClock;
+import android.os.SystemProperties;
 import android.os.Trace;
 import android.util.Slog;
 import android.util.SparseArray;
@@ -84,6 +85,8 @@ class KeyguardController {
             Flags.keyguardRemoveDefaultDisplayUsage();
 
     private static final String TAG = TAG_WITH_CLASS_NAME ? "KeyguardController" : TAG_ATM;
+
+    private static final String KEYGUARD_STATE_PROPERTY = "debug.tracing.keyguard_state";
 
     static final String KEYGUARD_SLEEP_TOKEN_TAG = "keyguard";
 
@@ -282,6 +285,10 @@ class KeyguardController {
             scheduleGoingAwayTimeout(displayId);
         }
 
+        if (displayId == DEFAULT_DISPLAY) {
+            publishKeyguardState();
+        }
+
         if (displayId == DEFAULT_DISPLAY && keyguardChanged) {
             AxSandboxService.get().setKeyguardDoneLocked(!keyguardShowing);
         }
@@ -334,6 +341,8 @@ class KeyguardController {
             Trace.traceEnd(TRACE_TAG_WINDOW_MANAGER);
             return;
         }
+
+        publishKeyguardState();
 
         mService.deferWindowLayout();
         final ActionChain chain = mService.mChainTracker.startTransit("kgGoAway");
@@ -497,6 +506,8 @@ class KeyguardController {
             return;
         }
 
+        publishKeyguardState();
+
         final TransitionController tc = mRootWindowContainer.mTransitionController;
         final KeyguardDisplayState state = getDisplayState(displayId);
 
@@ -548,6 +559,13 @@ class KeyguardController {
             mService.continueWindowLayout();
             mService.mChainTracker.endPartial();
         }
+    }
+
+    private void publishKeyguardState() {
+        final KeyguardDisplayState state = getDisplayState(DEFAULT_DISPLAY);
+        final boolean visible = state.mKeyguardShowing && !state.mKeyguardGoingAway
+                && !state.mOccluded;
+        SystemProperties.set(KEYGUARD_STATE_PROPERTY, visible ? "1" : "0");
     }
 
     /**
