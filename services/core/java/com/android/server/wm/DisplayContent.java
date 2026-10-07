@@ -1051,6 +1051,7 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
                 mTmpApplySurfaceChangesTransactionState.displayHasContent |= displayHasContent;
             }
 
+
             if (w.mHasSurface && isDisplayed) {
                 if ((w.mAttrs.flags & FLAG_KEEP_SCREEN_ON) != 0) {
                     mTmpHoldScreenWindow = w;
@@ -1267,6 +1268,13 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
         mWmService.mInputManager.setInTouchMode(mInTouchMode, mWmService.MY_PID, mWmService.MY_UID,
                 /* hasPermission= */ true, mDisplayId);
         mAppCompatCameraPolicy.start();
+        final AxRefreshRateController refreshRateController =
+                AxRefreshRateController.getInstance();
+        if (isDefaultDisplay) {
+            refreshRateController.init(mWmService.mContext, mWmService);
+        } else {
+            refreshRateController.onDisplayAdded(mDisplayId);
+        }
     }
 
     private void beginHoldScreenUpdate() {
@@ -3052,6 +3060,7 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
     void onDisplayChanged(DisplayContent dc) {
         super.onDisplayChanged(dc);
         updateSystemGestureExclusionLimit();
+        AxRefreshRateController.getInstance().onDisplayChanged(mDisplayId);
     }
 
     void updateSystemGestureExclusionLimit() {
@@ -3497,6 +3506,7 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
     @Override
     void removeImmediately() {
         mDeferredRemoval = false;
+        AxRefreshRateController.getInstance().onDisplayRemoved(mDisplayId);
         try {
             if (DesktopExperienceFlags.ENABLE_DISPLAY_CONTENT_MODE_MANAGEMENT.isTrue()
                     && mWmService.mDisplayWindowSettings.shouldShowSystemDecorsLocked(this)) {
@@ -4156,6 +4166,10 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
         if (mDisplayId == DEFAULT_DISPLAY && newFocus != null) {
             AxSandboxService.get().onAppFocusChanged(newFocus, newTask);
         }
+
+        final AxRefreshRateController refreshRateController =
+                AxRefreshRateController.getInstance();
+        refreshRateController.updateFocusedApp(mDisplayId, newFocus);
 
         if (newFocus != null && isDefaultDisplay) {
             final GameSpaceService gameSpaceService =
@@ -5212,6 +5226,7 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
 
         mTmpApplySurfaceChangesTransactionState.reset();
 
+
         Trace.traceBegin(TRACE_TAG_WINDOW_MANAGER, "applyWindowSurfaceChanges");
         try {
             forAllWindows(mApplySurfaceChangesTransaction, true /* traverseTopToBottom */);
@@ -5221,6 +5236,22 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
 
         mLastHasContent = mTmpApplySurfaceChangesTransactionState.displayHasContent;
         if (!inTransition()) {
+            final AxRefreshRateController axRrc = AxRefreshRateController.getInstance();
+            axRrc.updateVoteResult(mDisplayId);
+            if (axRrc.hasActiveVote()) {
+                mTmpApplySurfaceChangesTransactionState.preferredModeId = 0;
+                mTmpApplySurfaceChangesTransactionState.preferredRefreshRate = 0;
+                mTmpApplySurfaceChangesTransactionState.preferredMinRefreshRate = 0;
+                mTmpApplySurfaceChangesTransactionState.preferredMaxRefreshRate = 0;
+                final float axMin = axRrc.getMinPreferredRate();
+                final float axMax = axRrc.getMaxPreferredRate();
+                mTmpApplySurfaceChangesTransactionState.preferredMinRefreshRate = axMin;
+                mTmpApplySurfaceChangesTransactionState.preferredMaxRefreshRate = axMax;
+                if (axMin > 0 && Math.abs(axMin - axMax) < 1.0f
+                        && mDisplayInfo.findDefaultModeByRefreshRate(axMax) != null) {
+                    mTmpApplySurfaceChangesTransactionState.preferredRefreshRate = axMax;
+                }
+            }
             mWmService.mDisplayManagerInternal.setDisplayProperties(mDisplayId,
                     mLastHasContent,
                     mTmpApplySurfaceChangesTransactionState.preferredRefreshRate,

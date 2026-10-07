@@ -96,6 +96,7 @@ public class FreeformOverlayManagerService extends SystemService {
                 Intent intent = new Intent(ACTION_BRING_ALL_TO_BACK);
                 intent.setClassName(EDGE_SERVICE_PACKAGE, EDGE_SERVICE_CLASS);
                 getContext().startServiceAsUser(intent, UserHandle.CURRENT);
+                AxRefreshRateController.getInstance().onAllFreeformDisplaysHidden();
             } finally {
                 Binder.restoreCallingIdentity(token);
             }
@@ -128,6 +129,8 @@ public class FreeformOverlayManagerService extends SystemService {
                 if (dmi != null) {
                     dmi.pauseFreeformDisplay(displayId);
                 }
+                AxRefreshRateController.getInstance().onFreeformDisplayVisibilityChanged(
+                        displayId, false);
             } finally {
                 Binder.restoreCallingIdentity(token);
             }
@@ -141,6 +144,8 @@ public class FreeformOverlayManagerService extends SystemService {
                 if (dmi != null) {
                     dmi.resumeFreeformDisplay(displayId);
                 }
+                AxRefreshRateController.getInstance().onFreeformDisplayVisibilityChanged(
+                        displayId, true);
             } finally {
                 Binder.restoreCallingIdentity(token);
             }

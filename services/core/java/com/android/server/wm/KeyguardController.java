@@ -249,6 +249,7 @@ class KeyguardController {
         state.writeEventLog("setKeyguardShown");
 
         if (displayId == DEFAULT_DISPLAY && keyguardChanged) {
+            AxRefreshRateController.getInstance().setKeyguardDone(!keyguardShowing);
             final GameSpaceService gameSpaceService =
                     LocalServices.getService(GameSpaceService.class);
             if (gameSpaceService != null) {

@@ -3524,6 +3524,7 @@ public class WindowManagerService extends IWindowManager.Stub
 
     @Override
     public void onUserSwitched() {
+        AxRefreshRateController.getInstance().onUserSwitched();
         synchronized (mGlobalLock) {
             // force a re-application of focused window sysui visibility on each display.
             mRoot.forAllDisplayPolicies(DisplayPolicy::resetSystemBarAttributes);
@@ -8119,6 +8120,9 @@ public class WindowManagerService extends IWindowManager.Stub
             final WindowState w = mWindowMap.get(token);
             if (w == null || w != w.mDisplayContent.getDisplayPolicy().getNotificationShade()) {
                 return;
+            }
+            if (w.getDisplayId() == DEFAULT_DISPLAY) {
+                AxRefreshRateController.getInstance().setNotificationShadeExpanded(expanded);
             }
             final WindowProcessController topApp = mAtmService.mTopApp;
             // Demotes the priority of top app if notification shade is expanded to occlude the app.

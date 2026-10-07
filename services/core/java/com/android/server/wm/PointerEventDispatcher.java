@@ -32,6 +32,8 @@ import java.util.ArrayList;
 public class PointerEventDispatcher extends InputEventReceiver {
     private final ArrayList<PointerEventListener> mListeners = new ArrayList<>();
     private PointerEventListener[] mListenersArray = new PointerEventListener[0];
+    private final AxRefreshRateController mRefreshRateController =
+            AxRefreshRateController.getInstance();
 
     public PointerEventDispatcher(InputChannel inputChannel) {
         super(inputChannel, UiThread.getHandler().getLooper());
@@ -47,6 +49,8 @@ public class PointerEventDispatcher extends InputEventReceiver {
                     dragonite.inputBoost();
                 }
                 MotionEvent motionEvent = (MotionEvent) event;
+                mRefreshRateController.onPointerEvent(
+                        motionEvent.getDisplayId(), motionEvent.getActionMasked());
                 PointerEventListener[] listeners;
                 synchronized (mListeners) {
                     if (mListenersArray == null) {

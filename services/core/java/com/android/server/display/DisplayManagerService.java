@@ -2560,6 +2560,9 @@ public final class DisplayManagerService extends SystemService {
         final int displayId = display.getDisplayIdLocked();
         if (displayId == Display.DEFAULT_DISPLAY) {
             recordTopInsetLocked(display);
+            if (mMiFreeformDisplayAdapter != null) {
+                mMiFreeformDisplayAdapter.updateDefaultDisplayRefreshRatesLocked();
+            }
         }
         // We don't bother invalidating the display info caches here because any changes to the
         // display info will trigger a cache invalidation inside of LogicalDisplay before we hit
@@ -5992,10 +5995,10 @@ public final class DisplayManagerService extends SystemService {
         
         @Override
         public boolean isFreeformDisplayId(int displayId) {
-            if (mMiFreeformDisplayAdapter != null) {
-                return mMiFreeformDisplayAdapter.isFreeformDisplayIdLocked(displayId);
+            synchronized (mSyncRoot) {
+                return mMiFreeformDisplayAdapter != null
+                        && mMiFreeformDisplayAdapter.isFreeformDisplayIdLocked(displayId);
             }
-            return false;
         }
         
         @Override
