@@ -112,6 +112,12 @@ import java.util.function.IntSupplier;
 public class DisplayModeDirector {
     private static final String FORCE_PEAK_REFRESH_RATE_PROPERTY =
             "debug.tracing.force_peak_refresh_rate";
+    private static final String AX_MIN_REFRESH_RATE_PROPERTY =
+            "debug.tracing.ax_min_refresh_rate";
+    private static final String AX_PEAK_REFRESH_RATE_PROPERTY =
+            "debug.tracing.ax_peak_refresh_rate";
+    private static final boolean USE_LTPO_BASE_REFRESH_RATE = !SystemProperties.get(
+            "ro.surface_flinger.panel_refresh_rate_property", "").isEmpty();
 
     public static final float SYNCHRONIZED_REFRESH_RATE_TARGET = DEFAULT_LOW_REFRESH_RATE;
     public static final float SYNCHRONIZED_REFRESH_RATE_TOLERANCE = 1;
@@ -1195,6 +1201,10 @@ public class DisplayModeDirector {
                         && minRefreshRate >= highestRefreshRate - 0.01f;
                 SystemProperties.set(FORCE_PEAK_REFRESH_RATE_PROPERTY,
                         forcePeakRefreshRate ? "1" : "0");
+                SystemProperties.set(AX_MIN_REFRESH_RATE_PROPERTY,
+                        Integer.toString(Math.round(minRefreshRate)));
+                SystemProperties.set(AX_PEAK_REFRESH_RATE_PROPERTY,
+                        Integer.toString(Math.round(peakRefreshRate)));
             }
             if (mSupportedModesByDisplay.contains(displayId)) {
                 updateRefreshRateSettingLocked(displayId);
@@ -1216,10 +1226,23 @@ public class DisplayModeDirector {
             // so, enable the brightness observer. The logic here is more complicated and fragile
             // than necessary, and we should improve it. See b/156304339 for more info.
             if (mPeakRefreshRatePhysicalLimitEnabled) {
-                Vote peakVote = peakRefreshRate == 0f
-                        ? null
-                        : Vote.forPhysicalRefreshRates(0f,
-                                Math.max(minRefreshRate, peakRefreshRate));
+                Vote peakVote = null;
+                if (peakRefreshRate != 0f) {
+                    float physicalMinRefreshRate = 0f;
+                    float physicalPeakRefreshRate = Math.max(
+                            minRefreshRate, peakRefreshRate);
+                    if (USE_LTPO_BASE_REFRESH_RATE && (minRefreshRate == 0f
+                            || mDisplayObserver.isDozingLocked(displayId))) {
+                        // Vendor LTPO downshifts require the highest base mode to remain active.
+                        final float highestRefreshRate = getMaxRefreshRateLocked(displayId);
+                        if (highestRefreshRate > 0f) {
+                            physicalMinRefreshRate = highestRefreshRate;
+                            physicalPeakRefreshRate = highestRefreshRate;
+                        }
+                    }
+                    peakVote = Vote.forPhysicalRefreshRates(
+                            physicalMinRefreshRate, physicalPeakRefreshRate);
+                }
                 mVotesStorage.updateVote(displayId, Vote.PRIORITY_USER_SETTING_PEAK_REFRESH_RATE,
                         peakVote);
             }
@@ -1431,6 +1454,8 @@ public class DisplayModeDirector {
         private int mExternalDisplayPeakRefreshRate;
         private final boolean mRefreshRateSynchronizationEnabled;
         private int mDefaultDisplayType = Display.TYPE_INTERNAL;
+        @GuardedBy("mLock")
+        private int mDefaultDisplayState = Display.STATE_UNKNOWN;
 
         DisplayObserver(Context context, Handler handler, VotesStorage votesStorage,
                 Injector injector) {
@@ -1720,7 +1745,14 @@ public class DisplayModeDirector {
                 return;
             }
             boolean changed = false;
+            boolean dozeStateChanged = false;
             synchronized (mLock) {
+                if (displayId == Display.DEFAULT_DISPLAY
+                        && info.state != mDefaultDisplayState) {
+                    dozeStateChanged = Display.isDozeState(info.state)
+                            != Display.isDozeState(mDefaultDisplayState);
+                    mDefaultDisplayState = info.state;
+                }
                 if (!Arrays.equals(mSupportedModesByDisplay.get(displayId), info.supportedModes)) {
                     mSupportedModesByDisplay.put(displayId, info.supportedModes);
                     changed = true;
@@ -1734,7 +1766,7 @@ public class DisplayModeDirector {
                     changed = true;
                     mDefaultModeByDisplay.put(displayId, info.getDefaultMode());
                 }
-                if (changed) {
+                if (changed || (USE_LTPO_BASE_REFRESH_RATE && dozeStateChanged)) {
                     notifyDesiredDisplayModeSpecsChangedLocked();
                     mSettingsObserver.updateRefreshRateSettingLocked(displayId);
                 }
@@ -1742,6 +1774,12 @@ public class DisplayModeDirector {
             if (changed && displayId == Display.DEFAULT_DISPLAY) {
                 AxRefreshRateController.getInstance().forceResync();
             }
+        }
+
+        @GuardedBy("mLock")
+        private boolean isDozingLocked(int displayId) {
+            return displayId == Display.DEFAULT_DISPLAY
+                    && Display.isDozeState(mDefaultDisplayState);
         }
 
         private void updateHasArrSupport(int displayId, @Nullable DisplayInfo info) {

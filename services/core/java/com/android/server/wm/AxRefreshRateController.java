@@ -88,6 +88,7 @@ public class AxRefreshRateController {
     private static final String TAG = "AxRefreshRateController";
 
     private static final String SETTINGS_REFRESH_RATE_MODE = "display_refresh_rate_mode";
+    private static final String DYNAMIC_PEAK_REFRESH_RATE = "dynamic_peak_refresh_rate";
     private static final String LOCKSCREEN_LIMIT_REFRESH_RATE = "lockscreen_limit_refresh_rate";
     private static final String PER_APP_REFRESH_RATE = "per_app_refresh_rate";
 
@@ -119,6 +120,7 @@ public class AxRefreshRateController {
 
     private volatile RefreshRateMode mRefreshRateMode = RefreshRateMode.MAXIMUM;
     private volatile int mRefreshRateSetting = 60;
+    private volatile float mDynamicPeakRefreshRateHz;
     private volatile boolean mLockscreenLimitEnabled;
     private volatile boolean mKeyguardDone = true;
     private volatile boolean mNotificationShadeExpanded;
@@ -154,7 +156,7 @@ public class AxRefreshRateController {
     };
     private final Runnable mDisplayChangeRequeryRunnable = () -> {
         queryAndApplyDisplayModes();
-        applyRefreshRateMode(mRefreshRateSetting);
+        loadRefreshRateSetting();
         refreshFocusedAppOverrides();
         invalidateLastSync();
         syncAndRequestTraversal();
@@ -466,7 +468,7 @@ public class AxRefreshRateController {
         }
         mHandler.post(() -> {
             queryAndApplyDisplayModes();
-            applyRefreshRateMode(mRefreshRateSetting);
+            loadRefreshRateSetting();
             refreshFocusedAppOverrides();
             invalidateLastSync();
             mHandler.removeCallbacks(mDisplayChangeRequeryRunnable);
@@ -501,6 +503,8 @@ public class AxRefreshRateController {
                 case DYNAMIC_CONTENT:
                     return;
                 case KEYGUARD:
+                    setCurrentVote(0f, resolvePolicyRateLocked(policy, policyDisplay));
+                    return;
                 case APP:
                 case INTERACTIVE:
                 case MINIMUM:
@@ -828,8 +832,8 @@ public class AxRefreshRateController {
             return Policy.KEYGUARD;
         }
         if (displayId == Display.DEFAULT_DISPLAY && isDynamicMode()
-                && mNotificationShadeExpanded) {
-            return Policy.MAXIMUM;
+                && mNotificationShadeExpanded && boosted) {
+            return Policy.INTERACTIVE;
         }
         if (!mKeyguardDone) {
             return resolveModePolicy(boosted);
@@ -863,8 +867,10 @@ public class AxRefreshRateController {
             case KEYGUARD:
                 return mKeyguardRefreshRateHz;
             case INTERACTIVE:
+                return mDynamicPeakRefreshRateHz;
             case MAXIMUM:
-                return mMaxSupportedHz;
+                return isDynamicMode()
+                        ? mDynamicPeakRefreshRateHz : mMaxSupportedHz;
             case APP:
                 return display.appOverrideRate;
             case MINIMUM:
@@ -917,9 +923,12 @@ public class AxRefreshRateController {
             }
             policy = resolvePolicyLocked(displayId, policyDisplay,
                     boosted && policyDisplayId == mActiveDisplayId);
-            if (policy == Policy.DYNAMIC_CONTENT) {
+            if (policy == Policy.KEYGUARD) {
                 min = 0f;
-                peak = mMaxSupportedHz;
+                peak = resolvePolicyRateLocked(policy, policyDisplay);
+            } else if (policy == Policy.DYNAMIC_CONTENT) {
+                min = 0f;
+                peak = mDynamicPeakRefreshRateHz;
             } else {
                 final float rate = resolvePolicyRateLocked(policy, policyDisplay);
                 min = rate;
@@ -964,6 +973,13 @@ public class AxRefreshRateController {
         final int value = Settings.Global.getInt(mContext.getContentResolver(),
                 SETTINGS_REFRESH_RATE_MODE, sSupportsVrr ? 0 : Math.round(mMaxSupportedHz));
         applyRefreshRateMode(value);
+        final float dynamicPeakRefreshRate = Settings.System.getFloatForUser(
+                mContext.getContentResolver(), DYNAMIC_PEAK_REFRESH_RATE,
+                mMaxSupportedHz, UserHandle.USER_CURRENT);
+        final float supportedDynamicPeakRefreshRate = findSupportedRefreshRate(
+                dynamicPeakRefreshRate, RATE_MATCH_TOLERANCE_HZ);
+        mDynamicPeakRefreshRateHz = supportedDynamicPeakRefreshRate > 0f
+                ? supportedDynamicPeakRefreshRate : mMaxSupportedHz;
         mLockscreenLimitEnabled = Settings.System.getIntForUser(mContext.getContentResolver(),
                 LOCKSCREEN_LIMIT_REFRESH_RATE, 0, UserHandle.USER_CURRENT) != 0;
         if (mLockscreenLimitEnabled && !mKeyguardDone) {
@@ -1156,6 +1172,8 @@ public class AxRefreshRateController {
     private final class SettingsObserver extends ContentObserver {
         private final Uri mRefreshRateModeUri =
                 Settings.Global.getUriFor(SETTINGS_REFRESH_RATE_MODE);
+        private final Uri mDynamicPeakRefreshRateUri =
+                Settings.System.getUriFor(DYNAMIC_PEAK_REFRESH_RATE);
         private final Uri mLockscreenLimitUri =
                 Settings.System.getUriFor(LOCKSCREEN_LIMIT_REFRESH_RATE);
         private final Uri mPerAppRefreshRateUri = Settings.System.getUriFor(PER_APP_REFRESH_RATE);
@@ -1164,6 +1182,8 @@ public class AxRefreshRateController {
             super(mHandler);
             mContext.getContentResolver().registerContentObserver(
                     mRefreshRateModeUri, false, this, UserHandle.USER_ALL);
+            mContext.getContentResolver().registerContentObserver(
+                    mDynamicPeakRefreshRateUri, false, this, UserHandle.USER_ALL);
             mContext.getContentResolver().registerContentObserver(
                     mLockscreenLimitUri, false, this, UserHandle.USER_ALL);
             mContext.getContentResolver().registerContentObserver(
